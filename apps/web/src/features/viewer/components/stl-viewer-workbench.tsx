@@ -37,7 +37,8 @@ function PlyMesh({ url, color, opacity }: { url: string; color: string; opacity:
 
 // Picks right mesh component based on file ext. (stlmesh or plymesh)
 function SceneMesh({ object }: { object: SceneObject }) {
-  const ext = object.url.split(".").pop()?.toLowerCase();
+  // Use fileName (not url) because blob URLs have no extension
+  const ext = object.fileName.split(".").pop()?.toLowerCase();
   const { color, opacity } = object.visual;
   if (ext === "ply") return <PlyMesh url={object.url} color={color} opacity={opacity} />;
   return <StlMesh url={object.url} color={color} opacity={opacity} />;
