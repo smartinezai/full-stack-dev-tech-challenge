@@ -35,127 +35,10 @@ function computeCentroid(verts: Vector3[]): Vector3 {
   return sum.divideScalar(verts.length);
 }
 
-// Returns  3x3 covmat as typed 3x3 tuple
-function computeCovariance(verts: Vector3[], centroid: Vector3): Mat3 {
-  let cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
-  //for each vertex calculate distance to ccentroid along each axis
-  for (const v of verts) {
-    const dx = v.x - centroid.x;
-    const dy = v.y - centroid.y;
-    const dz = v.z - centroid.z;
-    cxx += dx * dx; cxy += dx * dy; cxz += dx * dz;
-    cyy += dy * dy; cyz += dy * dz; czz += dz * dz;
-  }
-  const n = verts.length;
-  return [
-    [cxx / n, cxy / n, cxz / n],
-    [cxy / n, cyy / n, cyz / n],
-    [cxz / n, cyz / n, czz / n],
-  ];
-}
 
-// Jacobi eigenvalue algo. for 3x3 symmetric mat
-// Returns eigenvectors (as Vector3) sorted by descending eigenvalue.
-function jacobiEigen(cov: Mat3): { vectors: [Vector3, Vector3, Vector3]; values: Vec3 } {
-  // use type Mat3 so the tuple is fixed length and there are no errors
-  const a: Mat3 = [
-    [cov[0][0], cov[0][1], cov[0][2]],
-    [cov[1][0], cov[1][1], cov[1][2]],
-    [cov[2][0], cov[2][1], cov[2][2]],
-  ];
-  // V accumulates rotations — its columns become the eigenvectors
-  const V: Mat3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-
-  for (let iter = 0; iter < 100; iter++) {
-    // Find largest non-diagonal element (to find the Principal component)
-    let maxVal = 0, p = 0, q = 1;
-    for (let i = 0; i < 3; i++) {
-      for (let j = i + 1; j < 3; j++) {
-        const aij = a[i as 0|1|2][j as 0|1|2]; //i is only ever 0,1 or 2
-        if (Math.abs(aij) > maxVal) { maxVal = Math.abs(aij); p = i; q = j; }
-      }
-    }
-    if (maxVal < 1e-10) break;
-
-    // Jacobi rotation angle to zero out a[p][q]
-    const pi = p as 0|1|2, qi = q as 0|1|2;
-    const app = a[pi][pi], aqq = a[qi][qi], apq = a[pi][qi];
-    const theta = 0.5 * Math.atan2(2 * apq, app - aqq);
-    const c = Math.cos(theta), s = Math.sin(theta); 
-
-    // Update diagonal (apply rotation)
-    a[pi][pi] = c * c * app - 2 * s * c * apq + s * s * aqq;
-    a[qi][qi] = s * s * app + 2 * s * c * apq + c * c * aqq;
-    a[pi][qi] = 0; a[qi][pi] = 0;
-
-    // Update non-diagonal elements (apply rotation)
-    for (let r = 0; r < 3; r++) {
-      if (r !== p && r !== q) {
-        const ri = r as 0|1|2;
-        const arp = a[ri][pi], arq = a[ri][qi];
-        a[ri][pi] = c * arp - s * arq; a[pi][ri] = a[ri][pi];
-        a[ri][qi] = s * arp + c * arq; a[qi][ri] = a[ri][qi];
-      }
-    }
-
-    // Accumulate into eigenvector mat, repeat until convergence towards 0
-    for (let r = 0; r < 3; r++) {
-      const ri = r as 0|1|2;
-      const vrp = V[ri][pi], vrq = V[ri][qi];
-      V[ri][pi] = c * vrp - s * vrq;
-      V[ri][qi] = s * vrp + c * vrq;
-    }
-  }
-
-  // Sort eigenvectors by descending eigenvalue
-  const eigenvalues: Vec3 = [a[0][0], a[1][1], a[2][2]];
-  const idx: Vec3 = [0, 1, 2];
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  idx.sort((i, j) => eigenvalues[j]! - eigenvalues[i]!);
-
-  const [i0, i1, i2] = idx;
-  return {
-    // Non-null assertions are safe: i0/i1/i2 are always 0, 1, or 2
-    values: [eigenvalues[i0]!, eigenvalues[i1]!, eigenvalues[i2]!],
-    vectors: [
-      new Vector3(V[0][i0]!, V[1][i0]!, V[2][i0]!).normalize(),
-      new Vector3(V[0][i1]!, V[1][i1]!, V[2][i1]!).normalize(),
-      new Vector3(V[0][i2]!, V[1][i2]!, V[2][i2]!).normalize(),
-    ],
-  };
-}
-
-// Builds a 4x4 transform that coarsely aligns the crown to the scan:
-// 1. Rotate crown so its principal axes align with the scan's principal axes
-// 2. Translate crown centroid to scan centroid
-function buildPcaTransform(scanVerts: Vector3[], crownVerts: Vector3[]): Matrix4 {
-  const scanCentroid = computeCentroid(scanVerts);
-  const crownCentroid = computeCentroid(crownVerts);
-
-  const { vectors: sv } = jacobiEigen(computeCovariance(scanVerts, scanCentroid));
-  const { vectors: cv } = jacobiEigen(computeCovariance(crownVerts, crownCentroid));
-
-  //goal: find rotation R that maps crown axes onto scan axes
-  // R = Q_scan * Q_crown^T maps crown principal axes onto scan principal axes
-  // where q_scan  and q_crown are mats where the cols are the eigenvectors 
-  const Qs = new Matrix3().set(
-    sv[0].x, sv[1].x, sv[2].x,
-    sv[0].y, sv[1].y, sv[2].y,
-    sv[0].z, sv[1].z, sv[2].z,
-  );
-  const QcT = new Matrix3().set(
-    cv[0].x, cv[1].x, cv[2].x,
-    cv[0].y, cv[1].y, cv[2].y,
-    cv[0].z, cv[1].z, cv[2].z,
-  ).transpose();
-  const R = Qs.clone().multiply(QcT);
-
-  // move crown centroid to scan centroid (after rotation)
-  const rotatedCrown = crownCentroid.clone().applyMatrix3(R);
-  const t = scanCentroid.clone().sub(rotatedCrown);
-
-  // Assemble 4x4 mat 
-  const e = R.elements;
+// Assembles a 4x4 transform from a Matrix3 rotation and translation vector
+function assembleTransform(R: Matrix3, t: Vector3): Matrix4 {
+  const e = R.elements; // column-major
   const m4 = new Matrix4();
   m4.set(
     e[0], e[3], e[6], t.x,
@@ -164,6 +47,152 @@ function buildPcaTransform(scanVerts: Vector3[], crownVerts: Vector3[]): Matrix4
     0,    0,    0,    1,
   );
   return m4;
+}
+
+
+// --- ICP (Iterative Closest Point with full rotation + translation) ---
+
+type Vec4 = [number, number, number, number];
+type Mat4x4 = [Vec4, Vec4, Vec4, Vec4];
+
+// For each crown vertex, finds the closest scan vertex by brute-force search.
+function findClosestPoints(crownVerts: Vector3[], scanVerts: Vector3[]): [Vector3, Vector3][] {
+  return crownVerts.map((cv) => {
+    let minDist = Infinity;
+    let closest = scanVerts[0]!;
+    for (const sv of scanVerts) {
+      const d = cv.distanceToSquared(sv);
+      if (d < minDist) { minDist = d; closest = sv; }
+    }
+    return [cv, closest];
+  });
+}
+
+// Jacobi eigenvalue solver for a 4x4 symmetric matrix.
+// Returns the eigenvector with the largest eigenvalue (used for quaternion ICP).
+function jacobiLargestEigen4(m: Mat4x4): Vec4 {
+  const a: Mat4x4 = [
+    [m[0][0], m[0][1], m[0][2], m[0][3]],
+    [m[1][0], m[1][1], m[1][2], m[1][3]],
+    [m[2][0], m[2][1], m[2][2], m[2][3]],
+    [m[3][0], m[3][1], m[3][2], m[3][3]],
+  ];
+  const V: Mat4x4 = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+
+  for (let iter = 0; iter < 100; iter++) {
+    let maxVal = 0, p = 0, q = 1;
+    for (let i = 0; i < 4; i++) {
+      for (let j = i + 1; j < 4; j++) {
+        const aij = a[i as 0|1|2|3][j as 0|1|2|3];
+        if (Math.abs(aij) > maxVal) { maxVal = Math.abs(aij); p = i; q = j; }
+      }
+    }
+    if (maxVal < 1e-10) break;
+    const pi = p as 0|1|2|3, qi = q as 0|1|2|3;
+    const app = a[pi][pi], aqq = a[qi][qi], apq = a[pi][qi];
+    const theta = 0.5 * Math.atan2(2 * apq, app - aqq);
+    const c = Math.cos(theta), s = Math.sin(theta);
+    a[pi][pi] = c*c*app - 2*s*c*apq + s*s*aqq;
+    a[qi][qi] = s*s*app + 2*s*c*apq + c*c*aqq;
+    a[pi][qi] = 0; a[qi][pi] = 0;
+    for (let r = 0; r < 4; r++) {
+      if (r !== p && r !== q) {
+        const ri = r as 0|1|2|3;
+        const arp = a[ri][pi], arq = a[ri][qi];
+        a[ri][pi] = c*arp - s*arq; a[pi][ri] = a[ri][pi];
+        a[ri][qi] = s*arp + c*arq; a[qi][ri] = a[ri][qi];
+      }
+    }
+    for (let r = 0; r < 4; r++) {
+      const ri = r as 0|1|2|3;
+      const vrp = V[ri][pi], vrq = V[ri][qi];
+      V[ri][pi] = c*vrp - s*vrq;
+      V[ri][qi] = s*vrp + c*vrq;
+    }
+  }
+
+  // Return eigenvector of the largest eigenvalue
+  const eigs: Vec4 = [a[0][0], a[1][1], a[2][2], a[3][3]];
+  let maxIdx = 0;
+  for (let i = 1; i < 4; i++) if (eigs[i as 0|1|2|3] > eigs[maxIdx as 0|1|2|3]) maxIdx = i;
+  const mi = maxIdx as 0|1|2|3;
+  return [V[0][mi], V[1][mi], V[2][mi], V[3][mi]];
+}
+
+// One ICP step using the quaternion method (Horn 1987).
+// Finds the optimal rotation+translation for the given closest-point pairs.
+function icpStep(pairs: [Vector3, Vector3][]): Matrix4 {
+  const crownC = computeCentroid(pairs.map(([c]) => c));
+  const scanC  = computeCentroid(pairs.map(([, s]) => s));
+
+  // Build 3x3 cross-covariance matrix H
+  const H: Mat3 = [[0,0,0],[0,0,0],[0,0,0]];
+  for (const [c, s] of pairs) {
+    const dc = c.clone().sub(crownC);
+    const ds = s.clone().sub(scanC);
+    const cx = [dc.x, dc.y, dc.z] as Vec3;
+    const sx = [ds.x, ds.y, ds.z] as Vec3;
+    for (let i = 0; i < 3; i++)
+      for (let j = 0; j < 3; j++)
+        H[i as 0|1|2][j as 0|1|2] += cx[i as 0|1|2] * sx[j as 0|1|2];
+  }
+
+  // Build the 4x4 symmetric N matrix from H — its largest eigenvector is the optimal quaternion
+  const [H00,H01,H02] = H[0]; const [H10,H11,H12] = H[1]; const [H20,H21,H22] = H[2];
+  const N: Mat4x4 = [
+    [H00+H11+H22,  H21-H12,     H02-H20,     H10-H01    ],
+    [H21-H12,      H00-H11-H22, H01+H10,     H20+H02    ],
+    [H02-H20,      H01+H10,    -H00+H11-H22, H12+H21    ],
+    [H10-H01,      H20+H02,     H12+H21,    -H00-H11+H22],
+  ];
+
+  // Largest eigenvector = optimal rotation quaternion [w, x, y, z]
+  const [qw, qx, qy, qz] = jacobiLargestEigen4(N);
+
+  // Convert quaternion to 3x3 rotation matrix
+  const R = new Matrix3().set(
+    1-2*(qy*qy+qz*qz),  2*(qx*qy-qw*qz),   2*(qx*qz+qw*qy),
+    2*(qx*qy+qw*qz),    1-2*(qx*qx+qz*qz), 2*(qy*qz-qw*qx),
+    2*(qx*qz-qw*qy),    2*(qy*qz+qw*qx),   1-2*(qx*qx+qy*qy),
+  );
+
+  // Translation: t = scanCentroid - R * crownCentroid
+  const t = scanC.clone().sub(crownC.clone().applyMatrix3(R));
+  return assembleTransform(R, t);
+}
+
+// Runs full ICP (rotation + translation) for up to maxIter iterations.
+function runIcp(
+  scanVerts: Vector3[],
+  crownVerts: Vector3[],
+  initialTransform: Matrix4,
+  maxIter = 100,
+  tolerance = 0.0001,
+): { transform: Matrix4; iterations: number; finalError: number } {
+  let current = crownVerts.map((v) => v.clone().applyMatrix4(initialTransform));
+  let cumulative = initialTransform.clone();
+  let iterations = 0;
+  let finalError = Infinity;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    const step = Math.max(1, Math.floor(current.length / 1000));
+    const sample = current.filter((_, i) => i % step === 0);
+    const pairs = findClosestPoints(sample, scanVerts);
+
+    finalError = Math.sqrt(
+      pairs.reduce((s, [c, sv]) => s + c.distanceToSquared(sv), 0) / pairs.length
+    );
+
+    const delta = icpStep(pairs);
+    const deltaT = new Vector3(delta.elements[12]!, delta.elements[13]!, delta.elements[14]!);
+    if (deltaT.length() < tolerance) { iterations = iter + 1; break; }
+
+    current = current.map((v) => v.clone().applyMatrix4(delta));
+    cumulative = delta.clone().multiply(cumulative);
+    iterations = iter + 1;
+  }
+
+  return { transform: cumulative, iterations, finalError };
 }
 
 //called when app calls run placement
@@ -181,17 +210,67 @@ export async function runCrownPlacement(
   const scanVerts = sampleVertices(scanGeom);
   const crownVerts = sampleVertices(crownGeom);
 
-  const transform = buildPcaTransform(scanVerts, crownVerts);
-  const e = transform.elements; 
+  const crownCentroid = computeCentroid(crownVerts);
+  const scanCentroid = computeCentroid(scanVerts);
+
+  // Y-grid search: slide the crown in Y (XZ fixed), collect all short-ICP results.
+  // Then use an adaptive threshold to find valid tooth-level fits: keep only results
+  // within 20% of the minimum error (this excludes gum/base which gives higher error).
+  // Among valid results, pick the lowest final crown Y — the prep is ground down, so
+  // the crown ends up sitting lower there than on any intact adjacent tooth.
+  const scanMinY = Math.min(...scanVerts.map(v => v.y));
+  const scanMaxY = Math.max(...scanVerts.map(v => v.y));
+
+  type GridResult = { shortT: Matrix4; err: number; crownY: number };
+  const gridResults: GridResult[] = [];
+
+  for (let yOffset = scanMinY; yOffset <= scanMaxY; yOffset += 3) {
+    const t = new Matrix4().makeTranslation(0, yOffset - crownCentroid.y, 0);
+    const tc = computeCentroid(crownVerts.map(v => v.clone().applyMatrix4(t)));
+    const local = scanVerts.filter(v => v.distanceTo(tc) < 12);
+    const localVerts = local.length > 50 ? local : scanVerts;
+    const { transform: shortT, finalError: err } = runIcp(localVerts, crownVerts, t, 50, 0.01);
+    const crownY = crownCentroid.clone().applyMatrix4(shortT).y;
+    gridResults.push({ shortT, err, crownY });
+  }
+
+  // Adaptive threshold: keep results within 10% of the best error seen.
+  // Gum/base ICP errors are ~15-26% above the tooth minimum; tooth errors cluster within ~10%.
+  const minErr = Math.min(...gridResults.map(r => r.err));
+  const validResults = gridResults.filter(r => r.err <= minErr * 1.1);
+  // Pick the result whose final crown Y is closest to the scan centroid Y.
+  // The prep is the most-ground-down tooth but still at roughly the average tooth level.
+  // Gum/base lands far below; the wrong intact tooth lands above. Scan centroid splits them.
+  validResults.sort((a, b) =>
+    Math.abs(a.crownY - scanCentroid.y) - Math.abs(b.crownY - scanCentroid.y),
+  );
+
+  const best = validResults[0] ?? gridResults.reduce((a, b) => (a.err < b.err ? a : b));
+  const bestInitial = best.shortT;
+  const gridBestErr = best.err;
+  const lowestCrownY = best.crownY;
+
+  const bestCrownCent = crownCentroid.clone().applyMatrix4(bestInitial);
+  const localScan = scanVerts.filter(v => v.distanceTo(bestCrownCent) < 12);
+  const icpScanVerts = localScan.length > 100 ? localScan : scanVerts;
+  const localScanCentroid = computeCentroid(icpScanVerts);
+
+  const { transform, iterations, finalError } = runIcp(icpScanVerts, crownVerts, bestInitial, 200, 0.00001);
+  const e = transform.elements;
 
   return {
-    crownObjectId: crownObject.id, //which obj to move (apply transform to)
+    crownObjectId: crownObject.id,
     transformMatrix: Array.from(transform.elements),
     diagnostics: [
       `Scan: ${scanVerts.length} vertices sampled`,
       `Crown: ${crownVerts.length} vertices sampled`,
-      `Translation: [${e[12].toFixed(2)}, ${e[13].toFixed(2)}, ${e[14].toFixed(2)}] mm`,
-      "PCA coarse alignment complete",
+      `Crown centroid: [${crownCentroid.x.toFixed(2)}, ${crownCentroid.y.toFixed(2)}, ${crownCentroid.z.toFixed(2)}]`,
+      `Scan centroid: [${scanCentroid.x.toFixed(2)}, ${scanCentroid.y.toFixed(2)}, ${scanCentroid.z.toFixed(2)}]`,
+      `Grid: picked lowest crown Y = ${lowestCrownY.toFixed(2)} mm (ICP error ${gridBestErr.toFixed(3)} mm)`,
+      `Local scan verts: ${icpScanVerts.length} (centroid: [${localScanCentroid.x.toFixed(2)}, ${localScanCentroid.y.toFixed(2)}, ${localScanCentroid.z.toFixed(2)}])`,
+      `Translation: [${e[12]!.toFixed(2)}, ${e[13]!.toFixed(2)}, ${e[14]!.toFixed(2)}] mm`,
+      `ICP converged in ${iterations} iterations`,
+      `Final mean error: ${finalError.toFixed(3)} mm`,
     ],
   };
 }
