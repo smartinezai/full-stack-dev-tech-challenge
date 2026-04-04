@@ -16,7 +16,7 @@ export function App() {
   const [placementState, setPlacementState] =
     useState<PlacementRunState>(IDLE_PLACEMENT_STATE);
 
-  const { objects } = useSceneState();
+  const { objects, updateObjectVisual } = useSceneState();
 
   const handleRunPlacement = async () => {
     const scanObject = objects.find((object) => object.kind === "scan");
@@ -83,7 +83,7 @@ export function App() {
         </section>
 
         <section>
-          <StlViewerWorkbench objects={objects}/>
+          <StlViewerWorkbench objects={objects} onUpdateObject={updateObjectVisual} />
         </section>
       </main>
     </div>
