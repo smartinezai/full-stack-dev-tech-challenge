@@ -83,7 +83,7 @@ export function App() {
         </section>
 
         <section>
-          <StlViewerWorkbench />
+          <StlViewerWorkbench objects={objects}/>
         </section>
       </main>
     </div>
