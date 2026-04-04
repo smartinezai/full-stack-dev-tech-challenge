@@ -1,5 +1,6 @@
 import { Html, OrbitControls, OrthographicCamera } from "@react-three/drei";
 import { Canvas, useLoader } from "@react-three/fiber";
+import { Matrix4 } from "three";
 import { Suspense } from "react";
 import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -35,13 +36,23 @@ function PlyMesh({ url, color, opacity }: { url: string; color: string; opacity:
   );
 }
 
-// Picks right mesh component based on file ext. (stlmesh or plymesh)
+// Picks right mesh component based on file ext. (stlmesh or plymesh) and applies placement transform if present
 function SceneMesh({ object }: { object: SceneObject }) {
   // Use fileName (not url) because blob URLs have no extension
   const ext = object.fileName.split(".").pop()?.toLowerCase();
   const { color, opacity } = object.visual;
-  if (ext === "ply") return <PlyMesh url={object.url} color={color} opacity={opacity} />;
-  return <StlMesh url={object.url} color={color} opacity={opacity} />;
+
+  // Build transform mat — use placement result if available, otherwise identity mat
+  const matrix = object.transformMatrix
+    ? new Matrix4().fromArray(object.transformMatrix)
+    : new Matrix4();
+
+  const mesh = ext === "ply"
+    ? <PlyMesh url={object.url} color={color} opacity={opacity} />
+    : <StlMesh url={object.url} color={color} opacity={opacity} />;
+
+  // Wrap in a group and apply the mat so the mesh moves to the correct position
+  return <group matrix={matrix} matrixAutoUpdate={false}>{mesh}</group>;
 }
 
 export function StlViewerWorkbench({ objects, onUpdateObject }: StlViewerWorkbenchProps) {

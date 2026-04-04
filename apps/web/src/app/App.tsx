@@ -43,6 +43,15 @@ export function App() {
         sceneObjects: objects,
       });
 
+      // Apply transform mat to crown object in scene state
+      setObjects((prev) =>
+        prev.map((obj) =>
+          obj.id === result.crownObjectId
+            ? { ...obj, transformMatrix: result.transformMatrix }
+            : obj,
+        ),
+      );
+
       setPlacementState({
         status: "success",
         message:
