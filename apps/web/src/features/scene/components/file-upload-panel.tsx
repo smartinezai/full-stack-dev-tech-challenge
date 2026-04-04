@@ -1,6 +1,13 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui";
+import type { Dispatch, SetStateAction } from "react";
 
-export function FileUploadPanel() {
+import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui";
+import type { SceneObject } from "../types";
+
+interface FileUploadPanelProps {
+  setObjects: Dispatch<SetStateAction<SceneObject[]>>;
+}
+
+export function FileUploadPanel({ setObjects: _setObjects }: FileUploadPanelProps) {
   return (
     <Card>
       <CardHeader className="p-3">
