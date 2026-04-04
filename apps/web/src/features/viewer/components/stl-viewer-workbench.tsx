@@ -1,6 +1,8 @@
-import { OrbitControls } from "@react-three/drei"; //mouse controls for panning and zooming
+import { Html, OrbitControls, OrthographicCamera } from "@react-three/drei";
 
 import { Canvas, useLoader } from "@react-three/fiber";
+
+import { Suspense } from "react";
 
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 
@@ -11,7 +13,6 @@ interface StlViewerWorkbenchProps {
   // The list of 3D objects in the scene (scans, crowns...)
   objects: SceneObject[];
 }
-
 
 function ScanMesh() {
   // Loads and renders a single STL mesh.
@@ -32,11 +33,17 @@ export function StlViewerWorkbench({ objects: _objects }: StlViewerWorkbenchProp
 
       <CardContent className="px-3 pb-3">
         <div className="rounded-md overflow-hidden" style={{ height: "60vh" }}>
-          <Canvas camera={{ position: [0, 0, 50], fov: 50 }}>
+          <Canvas>
+            {/* Orthographic camera to avoid distortion of parallel lines,
+                makeDefault to use as the active camera. */}
+            <OrthographicCamera makeDefault position={[0, 0, 100]} zoom={4} />
             <ambientLight intensity={0.4} />
             <directionalLight position={[10, 20, 10]} intensity={1.2} />
             <directionalLight position={[-10, -10, -5]} intensity={0.3} />
-            <ScanMesh />
+            {/* fallback while stl still loading so it doesn't look weird or broken. */}
+            <Suspense fallback={<Html center><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600" /></Html>}>
+              <ScanMesh />
+            </Suspense>
             <OrbitControls />
           </Canvas>
         </div>
