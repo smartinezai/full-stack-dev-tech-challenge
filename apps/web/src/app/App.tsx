@@ -74,7 +74,7 @@ export function App() {
 
       <main className="w-full space-y-3 px-4 py-3 sm:px-6">
         <section className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
-          <FileUploadPanel setObjects={setObjects} />
+          <FileUploadPanel objects={objects} setObjects={setObjects} />
 
           <PlacementPanel
             status={placementState}

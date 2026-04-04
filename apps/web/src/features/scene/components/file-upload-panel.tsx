@@ -5,6 +5,7 @@ import { Button, Card, CardContent, CardHeader, CardTitle } from "@repo/ui";
 import type { SceneObject } from "../types";
 
 interface FileUploadPanelProps {
+  objects: SceneObject[];
   setObjects: Dispatch<SetStateAction<SceneObject[]>>;
 }
 
@@ -40,7 +41,7 @@ function fileToSceneObject(file: File): SceneObject {
   };
 }
 
-export function FileUploadPanel({ setObjects }: FileUploadPanelProps) {
+export function FileUploadPanel({ objects, setObjects }: FileUploadPanelProps) {
   // Tracks whether file is being dragged over the drop zone
   const [isDragging, setIsDragging] = useState(false);
   // Hidden file input — triggered when "Browse" is clicked
@@ -64,6 +65,15 @@ export function FileUploadPanel({ setObjects }: FileUploadPanelProps) {
   function handleDragOver(e: DragEvent<HTMLDivElement>) {
     e.preventDefault(); // required to allow drop
     setIsDragging(true);
+  }
+
+  function removeObject(id: string) {
+    setObjects((prev) => {
+      const obj = prev.find((o) => o.id === id);
+      // Revoke blob URLs to free browser memory when the object is removed
+      if (obj?.url.startsWith("blob:")) URL.revokeObjectURL(obj.url);
+      return prev.filter((o) => o.id !== id);
+    });
   }
 
   return (
@@ -106,6 +116,31 @@ export function FileUploadPanel({ setObjects }: FileUploadPanelProps) {
           className="hidden"
           onChange={(e) => e.target.files && addFiles(e.target.files)}
         />
+
+        {/* File list — shown when there are objs in the scene */}
+        {objects.length > 0 && (
+          <div className="flex flex-col gap-1">
+            {objects.map((obj) => (
+              <div key={obj.id} className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2">
+                {/* Color swatch */}
+                <div className="h-3 w-3 rounded-sm shrink-0" style={{ backgroundColor: obj.visual.color }} />
+                {/* Filename */}
+                <span className="flex-1 truncate text-xs text-slate-700">{obj.fileName}</span>
+                {/* Kind badge */}
+                <span className="text-xs text-slate-400">{obj.kind}</span>
+                {/* Delete button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 px-2 text-xs text-red-500 hover:text-red-700"
+                  onClick={() => removeObject(obj.id)}
+                >
+                  ✕
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
