@@ -19,7 +19,10 @@ function ScanMesh() {
   const geometry = useLoader(STLLoader, "/data/cases/case-04/scan-04.stl");
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color="#e0d0c0" />
+      {/* roughness=1 -> fully matte 
+          metalness=0 so light behaves like bone/ceramic.
+          goal: concave areas fall into shadow naturally, convex surfaces stay bright. */}
+      <meshStandardMaterial color="#e0d0c0" roughness={1} metalness={0} />
     </mesh>
   );
 }
