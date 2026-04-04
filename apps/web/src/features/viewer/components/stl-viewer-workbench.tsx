@@ -20,7 +20,7 @@ function StlMesh({ url, color, opacity }: { url: string; color: string; opacity:
     <mesh geometry={geometry}>
       {/* roughness=1 -> fully matte, metalness=0 -> non-metallic (bone/ceramic).
           goal: make concave areas shade naturally */}
-      <meshStandardMaterial color={color} opacity={opacity} transparent={opacity < 1} roughness={1} metalness={0} />
+      <meshStandardMaterial color={color} opacity={opacity} transparent={true} roughness={1} metalness={0} />
     </mesh>
   );
 }
@@ -30,7 +30,7 @@ function PlyMesh({ url, color, opacity }: { url: string; color: string; opacity:
   const geometry = useLoader(PLYLoader, url);
   return (
     <mesh geometry={geometry}>
-      <meshStandardMaterial color={color} opacity={opacity} transparent={opacity < 1} roughness={1} metalness={0} />
+      <meshStandardMaterial color={color} opacity={opacity} transparent={true} roughness={1} metalness={0} />
     </mesh>
   );
 }
