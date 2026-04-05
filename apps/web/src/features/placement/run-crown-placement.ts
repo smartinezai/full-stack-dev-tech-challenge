@@ -213,39 +213,75 @@ export async function runCrownPlacement(
   const crownCentroid = computeCentroid(crownVerts);
   const scanCentroid = computeCentroid(scanVerts);
 
-  // Y-grid search: slide the crown in Y (XZ fixed), collect all short-ICP results.
-  // Then use an adaptive threshold to find valid tooth-level fits: keep only results
-  // within 20% of the minimum error (this excludes gum/base which gives higher error).
-  // Among valid results, pick the lowest final crown Y — the prep is ground down, so
-  // the crown ends up sitting lower there than on any intact adjacent tooth.
-  const scanMinY = Math.min(...scanVerts.map(v => v.y));
-  const scanMaxY = Math.max(...scanVerts.map(v => v.y));
+  // Detect whether the crown is pre-positioned in scene space or centered at the origin.
+  const crownAtOrigin = crownCentroid.length() < 3;
 
   type GridResult = { shortT: Matrix4; err: number; crownY: number };
-  const gridResults: GridResult[] = [];
+  const allGridResults: GridResult[] = [];
 
-  for (let yOffset = scanMinY; yOffset <= scanMaxY; yOffset += 3) {
-    const t = new Matrix4().makeTranslation(0, yOffset - crownCentroid.y, 0);
-    const tc = computeCentroid(crownVerts.map(v => v.clone().applyMatrix4(t)));
-    const local = scanVerts.filter(v => v.distanceTo(tc) < 12);
-    const localVerts = local.length > 50 ? local : scanVerts;
-    const { transform: shortT, finalError: err } = runIcp(localVerts, crownVerts, t, 50, 0.01);
-    const crownY = crownCentroid.clone().applyMatrix4(shortT).y;
-    gridResults.push({ shortT, err, crownY });
+  if (crownAtOrigin) {
+    // At-origin crowns (cases 1-3): XZ fixed to scan centroid, Y-grid search.
+    // Try 8 orientations (all 180° flip combos) × each Y step.
+    // Using scan centroid XZ as the anchor ensures ICP starts near the correct XZ region.
+    const orientations = [
+      new Matrix4(),
+      new Matrix4().makeRotationX(Math.PI),
+      new Matrix4().makeRotationY(Math.PI),
+      new Matrix4().makeRotationZ(Math.PI),
+      new Matrix4().makeRotationX(Math.PI).multiply(new Matrix4().makeRotationY(Math.PI)),
+      new Matrix4().makeRotationX(Math.PI).multiply(new Matrix4().makeRotationZ(Math.PI)),
+      new Matrix4().makeRotationY(Math.PI).multiply(new Matrix4().makeRotationZ(Math.PI)),
+      new Matrix4().makeRotationX(Math.PI).multiply(new Matrix4().makeRotationY(Math.PI)).multiply(new Matrix4().makeRotationZ(Math.PI)),
+    ];
+    const scanMinY = Math.min(...scanVerts.map(v => v.y));
+    const scanMaxY = Math.max(...scanVerts.map(v => v.y));
+    for (const rot of orientations) {
+      const rotatedCentroid = crownCentroid.clone().applyMatrix4(rot);
+      for (let yOffset = scanMinY; yOffset <= scanMaxY; yOffset += 3) {
+        // Fix XZ to scan centroid, vary Y
+        const t = new Matrix4().makeTranslation(
+          scanCentroid.x - rotatedCentroid.x,
+          yOffset - rotatedCentroid.y,
+          scanCentroid.z - rotatedCentroid.z,
+        ).multiply(rot);
+        const tc = crownCentroid.clone().applyMatrix4(t);
+        const local = scanVerts.filter(v => v.distanceTo(tc) < 12);
+        const localVerts = local.length > 50 ? local : scanVerts;
+        const { transform: shortT, finalError: err } = runIcp(localVerts, crownVerts, t, 50, 0.01);
+        const crownY = crownCentroid.clone().applyMatrix4(shortT).y;
+        allGridResults.push({ shortT, err, crownY });
+      }
+    }
+  } else {
+    // Pre-positioned crowns (cases 4-5): crown is already near the scan in scene space.
+    // Y-grid search: slide in Y only, run short ICP at each position.
+    const scanMinY = Math.min(...scanVerts.map(v => v.y));
+    const scanMaxY = Math.max(...scanVerts.map(v => v.y));
+    for (let yOffset = scanMinY; yOffset <= scanMaxY; yOffset += 3) {
+      const t = new Matrix4().makeTranslation(0, yOffset - crownCentroid.y, 0);
+      const tc = crownCentroid.clone().applyMatrix4(t);
+      const local = scanVerts.filter(v => v.distanceTo(tc) < 12);
+      const localVerts = local.length > 50 ? local : scanVerts;
+      const { transform: shortT, finalError: err } = runIcp(localVerts, crownVerts, t, 50, 0.01);
+      const crownY = crownCentroid.clone().applyMatrix4(shortT).y;
+      allGridResults.push({ shortT, err, crownY });
+    }
   }
 
-  // Adaptive threshold: keep results within 10% of the best error seen.
-  // Gum/base ICP errors are ~15-26% above the tooth minimum; tooth errors cluster within ~10%.
-  const minErr = Math.min(...gridResults.map(r => r.err));
-  const validResults = gridResults.filter(r => r.err <= minErr * 1.1);
-  // Pick the result whose final crown Y is closest to the scan centroid Y.
-  // The prep is the most-ground-down tooth but still at roughly the average tooth level.
-  // Gum/base lands far below; the wrong intact tooth lands above. Scan centroid splits them.
+  // Adaptive threshold: keep results within 30% of the best error seen.
+  const minErr = Math.min(...allGridResults.map(r => r.err));
+  const validResults = allGridResults.filter(r => r.err <= minErr * 1.3);
+
+  const candidateLog = validResults
+    .map(r => `Y=${r.crownY.toFixed(1)} err=${r.err.toFixed(3)}`)
+    .join(', ');
+
+  // Pick the candidate closest to scan centroid Y.
   validResults.sort((a, b) =>
     Math.abs(a.crownY - scanCentroid.y) - Math.abs(b.crownY - scanCentroid.y),
   );
+  const best: GridResult = validResults[0] ?? allGridResults.reduce((a, b) => (a.err < b.err ? a : b));
 
-  const best = validResults[0] ?? gridResults.reduce((a, b) => (a.err < b.err ? a : b));
   const bestInitial = best.shortT;
   const gridBestErr = best.err;
   const lowestCrownY = best.crownY;
@@ -256,19 +292,25 @@ export async function runCrownPlacement(
   const localScanCentroid = computeCentroid(icpScanVerts);
 
   const { transform, iterations, finalError } = runIcp(icpScanVerts, crownVerts, bestInitial, 200, 0.00001);
-  const e = transform.elements;
+
+  const finalTransform = transform;
+  const fe = finalTransform.elements;
+  const lift = 0;
 
   return {
     crownObjectId: crownObject.id,
-    transformMatrix: Array.from(transform.elements),
+    transformMatrix: Array.from(finalTransform.elements),
     diagnostics: [
       `Scan: ${scanVerts.length} vertices sampled`,
       `Crown: ${crownVerts.length} vertices sampled`,
       `Crown centroid: [${crownCentroid.x.toFixed(2)}, ${crownCentroid.y.toFixed(2)}, ${crownCentroid.z.toFixed(2)}]`,
       `Scan centroid: [${scanCentroid.x.toFixed(2)}, ${scanCentroid.y.toFixed(2)}, ${scanCentroid.z.toFixed(2)}]`,
-      `Grid: picked lowest crown Y = ${lowestCrownY.toFixed(2)} mm (ICP error ${gridBestErr.toFixed(3)} mm)`,
+      `Grid candidates: ${candidateLog}`,
+      `Mode: ${crownAtOrigin ? "at-origin (lowest-err)" : "pre-positioned (closest-to-centroid)"}`,
+      `Grid: picked crown Y = ${lowestCrownY.toFixed(2)} mm (ICP error ${gridBestErr.toFixed(3)} mm)`,
       `Local scan verts: ${icpScanVerts.length} (centroid: [${localScanCentroid.x.toFixed(2)}, ${localScanCentroid.y.toFixed(2)}, ${localScanCentroid.z.toFixed(2)}])`,
-      `Translation: [${e[12]!.toFixed(2)}, ${e[13]!.toFixed(2)}, ${e[14]!.toFixed(2)}] mm`,
+      `Post-ICP lift: ${lift.toFixed(2)} mm`,
+      `Translation: [${fe[12]!.toFixed(2)}, ${fe[13]!.toFixed(2)}, ${fe[14]!.toFixed(2)}] mm`,
       `ICP converged in ${iterations} iterations`,
       `Final mean error: ${finalError.toFixed(3)} mm`,
     ],
